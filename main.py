@@ -1,11 +1,12 @@
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 import json
 import httpx
 import os
 
 app = FastAPI()
 
-API_KEY = os.getenv("API_KEY")
+API_KEY = "QbVPuhyqwlRyqH4ckFU5HJ0i2YTkUuOmGSPpGYHSYbsF"
 COS_URL_OP14 = "https://s3.us-south.cloud-object-storage.appdomain.cloud/leavedetails/watsonxassistant_logs.txt"
 COS_URL_OP15 = "https://s3.us-south.cloud-object-storage.appdomain.cloud/leavedetails/phone_no_info.txt"
 EXTRACTOR_URL = "https://phone-no-extractor-final.onrender.com/extract"
@@ -32,6 +33,7 @@ async def log_webhook(request: Request):
     data = await request.json()
     json_content = json.dumps(data, indent=2)
 
+    # Save incoming payload
     with open(LOG_FILE_PATH, "w") as f:
         f.write(json_content)
 
@@ -47,9 +49,9 @@ async def log_webhook(request: Request):
             to_number = result.get("to_number", "Not found")
             phone_part = f"User Number: {from_number}\nChatbot Number: {to_number}"
     except Exception:
-        phone_part = "Extraction failed"
+        phone_part = "Phone number extraction failed."
 
-    # Convert time
+    # Convert timestamps
     try:
         start_ts = data["payload"]["call"]["start_timestamp"]
         stop_ts = data["payload"]["call"]["stop_timestamp"]
@@ -61,7 +63,7 @@ async def log_webhook(request: Request):
             ist_stop = times.get("stop_timestamp_ist", "Conversion error")
             time_part = f"Start Time (IST): {ist_start}\nStop Time (IST): {ist_stop}"
     except Exception:
-        time_part = "Timestamp conversion failed"
+        time_part = "Timestamp conversion failed."
 
     with open(PHONE_FILE_PATH, "w") as f:
         f.write(f"{phone_part}\n{time_part}")
@@ -75,8 +77,8 @@ async def log_webhook(request: Request):
                 await client.put(COS_URL_OP14, headers=headers, content=f.read())
             with open(PHONE_FILE_PATH, "rb") as f:
                 await client.put(COS_URL_OP15, headers=headers, content=f.read())
-    except Exception:
-        pass
 
-    # Return 204 No Content to suppress reply
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+        return JSONResponse(status_code=200, content={"message": "Successfully retrieved data and stored in COS."})
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"message": "Failed to upload to COS."})
