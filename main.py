@@ -1,13 +1,11 @@
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
-from datetime import datetime
+from fastapi import FastAPI, Request, Response, status
 import json
 import httpx
 import os
 
 app = FastAPI()
 
-API_KEY = "QbVPuhyqwlRyqH4ckFU5HJ0i2YTkUuOmGSPpGYHSYbsF"
+API_KEY = os.getenv("API_KEY")
 COS_URL_OP14 = "https://s3.us-south.cloud-object-storage.appdomain.cloud/leavedetails/watsonxassistant_logs.txt"
 COS_URL_OP15 = "https://s3.us-south.cloud-object-storage.appdomain.cloud/leavedetails/phone_no_info.txt"
 EXTRACTOR_URL = "https://phone-no-extractor-final.onrender.com/extract"
@@ -15,9 +13,6 @@ TIME_CONVERTER_URL = "https://time-convertor.onrender.com/convert"
 
 LOG_FILE_PATH = "watsonxassistant_logs.txt"
 PHONE_FILE_PATH = "phone_no_info.txt"
-
-class Message(BaseModel):
-    text: str
 
 @app.get("/")
 async def root():
@@ -40,6 +35,7 @@ async def log_webhook(request: Request):
     with open(LOG_FILE_PATH, "w") as f:
         f.write(json_content)
 
+    # Extract phone numbers
     try:
         from_uri = data["payload"]["session_initiation_protocol"]["headers"]["from_uri"]
         to_uri = data["payload"]["session_initiation_protocol"]["headers"]["to_uri"]
@@ -50,9 +46,10 @@ async def log_webhook(request: Request):
             from_number = result.get("from_number", "Not found")
             to_number = result.get("to_number", "Not found")
             phone_part = f"User Number: {from_number}\nChatbot Number: {to_number}"
-    except Exception as e:
-        phone_part = "Extraction failed: Error calling extractor"
+    except Exception:
+        phone_part = "Extraction failed"
 
+    # Convert time
     try:
         start_ts = data["payload"]["call"]["start_timestamp"]
         stop_ts = data["payload"]["call"]["stop_timestamp"]
@@ -64,12 +61,12 @@ async def log_webhook(request: Request):
             ist_stop = times.get("stop_timestamp_ist", "Conversion error")
             time_part = f"Start Time (IST): {ist_start}\nStop Time (IST): {ist_stop}"
     except Exception:
-        time_part = "Timestamps missing or conversion failed"
+        time_part = "Timestamp conversion failed"
 
-    phone_info = f"{phone_part}\n{time_part}"
     with open(PHONE_FILE_PATH, "w") as f:
-        f.write(phone_info)
+        f.write(f"{phone_part}\n{time_part}")
 
+    # Upload to COS
     try:
         token = await get_bearer_token()
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "text/plain"}
@@ -78,6 +75,8 @@ async def log_webhook(request: Request):
                 await client.put(COS_URL_OP14, headers=headers, content=f.read())
             with open(PHONE_FILE_PATH, "rb") as f:
                 await client.put(COS_URL_OP15, headers=headers, content=f.read())
-        return {"status": "success", "message": "Data uploaded to COS"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    except Exception:
+        pass
+
+    # Return 204 No Content to suppress reply
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
